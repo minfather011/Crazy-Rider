@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D 오토바이 배달 시뮬레이터</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js (3D Library) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+        }
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        /* 터치 조작 시 화면 드래그나 확대 방지 */
+        .touch-button {
+            touch-action: manipulation;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white relative">
+
+    <!-- 게임 뷰포트 -->
+    <div id="canvas-container" class="w-full h-full absolute inset-0 z-0"></div>
+
+    <!-- UI Overlay -->
+    <div class="absolute inset-0 pointer-events-none z-10 flex flex-col justify-between p-4">
+        
+        <!-- 상단 바: 상태 정보 -->
+        <div class="flex justify-between items-start w-full">
+            <!-- 프로필 및 자금 -->
+            <div class="bg-gray-900/80 backdrop-blur-md p-3 rounded-xl border border-yellow-500/30 pointer-events-auto flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-yellow-500 flex items-center justify-center text-xl">
+                    🛵
+                </div>
+                <div>
+                    <div class="text-xs text-gray-400 font-bold">베스트 라이더</div>
+                    <div class="text-lg font-black text-yellow-400" id="money-display">₩0</div>
+                </div>
+            </div>
+
+            <!-- 현재 시간 & 피크타임 상태 -->
+            <div class="flex flex-col items-end gap-2">
+                <!-- 게임 시계 -->
+                <div class="bg-gray-900/80 backdrop-blur-md px-4 py-2 rounded-xl border border-blue-400/30 pointer-events-auto text-right">
+                    <div class="text-xs text-gray-400">게임 시간</div>
+                    <div class="text-2xl font-mono font-bold text-blue-300" id="time-display">15:00</div>
+                </div>
+                <!-- 피크타임 알림 -->
+                <div id="peak-indicator" class="hidden bg-red-600 animate-pulse text-white font-bold text-xs px-3 py-1.5 rounded-full shadow-lg border border-red-400 pointer-events-auto">
+                    🔥 피크타임 (18:00~22:00) 배달팁 2배!
+                </div>
+            </div>
+        </div>
+
+        <!-- 중단 배달 정보 카드 (배달 수락/진행 상태) -->
+        <div class="w-full max-w-sm mx-auto flex flex-col gap-2 pointer-events-auto">
+            <!-- 콜 카드 (수락 대기) -->
+            <div id="call-card" class="bg-gray-950/90 backdrop-blur-lg p-4 rounded-2xl border-2 border-green-500 shadow-2xl transition-all duration-300 transform translate-y-0">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="bg-green-600 text-white text-xs font-bold px-2.5 py-1 rounded-md">신규 배달콜 수신!</span>
+                    <span class="text-xs text-gray-400" id="call-distance">거리: 0m</span>
+                </div>
+                <div class="space-y-1 mb-3">
+                    <div class="text-lg font-extrabold text-white" id="call-destination">📍 강남역 삼겹살 배달</div>
+                    <div class="text-sm text-gray-300 flex justify-between">
+                        <span>기본 배달비 (거리 비례):</span>
+                        <span class="font-bold text-yellow-400" id="call-base-fee">₩3,500</span>
+                    </div>
+                    <div class="text-sm text-red-400 flex justify-between" id="call-peak-bonus-row">
+                        <span>피크타임 보너스 (2배):</span>
+                        <span class="font-bold" id="call-peak-bonus">₩0</span>
+                    </div>
+                    <hr class="border-gray-800 my-2">
+                    <div class="text-base font-black text-green-400 flex justify-between">
+                        <span>총 수령 예상 금액:</span>
+                        <span class="text-xl" id="call-total-fee">₩3,500</span>
+                    </div>
+                </div>
+                <button id="accept-btn" class="w-full bg-green-500 hover:bg-green-600 active:scale-95 transition-all text-white font-black py-3 rounded-xl shadow-lg shadow-green-500/20 text-center">
+                    🏍️ 배달 수락하기
+                </button>
+            </div>
+
+            <!-- 배달 진행 중 카드 -->
+            <div id="delivery-card" class="hidden bg-gray-950/90 backdrop-blur-lg p-4 rounded-2xl border-2 border-yellow-500 shadow-2xl">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="bg-yellow-500 text-gray-950 text-xs font-black px-2.5 py-1 rounded-md">배달 중</span>
+                    <span class="text-xs font-bold text-red-400 animate-pulse" id="delivery-timer">남은 시간: 45초</span>
+                </div>
+                <div class="space-y-2">
+                    <div class="text-base font-extrabold" id="delivery-dest-name">📍 목적지 명칭</div>
+                    <!-- 거리 프로그레스 바 -->
+                    <div>
+                        <div class="flex justify-between text-xs text-gray-400 mb-1">
+                            <span>남은 거리</span>
+                            <span id="delivery-dist-text" class="font-bold text-yellow-400">120m</span>
+                        </div>
+                        <div class="w-full bg-gray-800 h-2.5 rounded-full overflow-hidden">
+                            <div id="delivery-progress" class="bg-yellow-400 h-full w-1/2 transition-all duration-300"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 하단: 미니맵 및 조작 안내 (PC/모바일 대응) -->
+        <div class="w-full flex justify-between items-end gap-4 pointer-events-auto">
+            
+            <!-- 왼쪽: 구글맵 스타일 미니맵 -->
+            <div class="w-32 h-32 md:w-40 md:h-40 bg-gray-950 border-2 border-blue-500/50 rounded-2xl overflow-hidden relative shadow-xl">
+                <!-- 미니맵 캔버스 -->
+                <canvas id="minimapCanvas" class="w-full h-full"></canvas>
+                <!-- 미니맵 라벨 -->
+                <div class="absolute bottom-1 left-1 bg-black/70 px-1.5 py-0.5 rounded text-[9px] text-blue-400 border border-blue-400/20 font-bold">
+                    🗺️ Google API 스타일
+                </div>
+            </div>
+
+            <!-- 중앙: 속도계 -->
+            <div class="bg-black/80 backdrop-blur-md px-4 py-2 rounded-2xl border border-gray-700 flex flex-col items-center">
+                <span class="text-[10px] text-gray-400 font-bold">SPEED</span>
+                <span class="text-2xl font-black font-mono text-cyan-400" id="speed-text">0 <span class="text-xs">km/h</span></span>
+            </div>
+
+            <!-- 오른쪽: 모바일용 컨트롤러 (PC에서는 WASD 이용, 화면 하단 우측 터치 조작) -->
+            <div class="flex gap-2">
+                <!-- 좌우 조이스틱 패드 -->
+                <div class="flex flex-col gap-1 items-center">
+                    <div class="flex gap-1">
+                        <button id="btn-left" class="touch-button w-14 h-14 bg-gray-800/80 active:bg-yellow-500 rounded-xl flex items-center justify-center text-2xl font-bold select-none border border-gray-600">◀</button>
+                        <button id="btn-right" class="touch-button w-14 h-14 bg-gray-800/80 active:bg-yellow-500 rounded-xl flex items-center justify-center text-2xl font-bold select-none border border-gray-600">▶</button>
+                    </div>
+                </div>
+                <!-- 가속/감속 패드 -->
+                <div class="flex flex-col gap-1">
+                    <button id="btn-up" class="touch-button w-14 h-14 bg-green-600/80 active:bg-green-500 rounded-xl flex flex-col items-center justify-center text-sm font-black select-none border border-green-500">
+                        <span>GAS</span>
+                        <span class="text-lg">▲</span>
+                    </button>
+                    <button id="btn-down" class="touch-button w-14 h-14 bg-red-600/80 active:bg-red-500 rounded-xl flex flex-col items-center justify-center text-sm font-black select-none border border-red-500">
+                        <span>BREAK</span>
+                        <span class="text-lg">▼</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 게임 시작 안내 모달 -->
+    <div id="start-modal" class="absolute inset-0 bg-gray-950/95 z-50 flex flex-col items-center justify-center p-6 text-center">
+        <div class="max-w-md bg-gray-900 border border-yellow-500/40 p-8 rounded-3xl shadow-2xl space-y-6">
+            <div class="text-5xl">🛵💨</div>
+            <h1 class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-amber-500">
+                구글맵 라이더 3D
+            </h1>
+            <p class="text-gray-300 text-sm leading-relaxed">
+                오토바이를 운전하여 서울 시티 전역에 음식을 신속하게 배달하세요!<br>
+                <span class="text-yellow-400 font-bold">거리가 멀수록 배달비가 더욱 비싸집니다.</span><br>
+                매일 저녁 <span class="text-red-400 font-extrabold">18:00 ~ 22:00</span>에는 저녁 러쉬타임 보너스로 <span class="text-red-400 font-extrabold">기본 금액의 2배</span>를 획득할 수 있습니다!
+            </p>
+            <div class="bg-gray-950 p-4 rounded-2xl text-left text-xs text-gray-400 space-y-1.5 border border-gray-800">
+                <div class="font-bold text-yellow-500">🎮 조작 가이드</div>
+                <div>• <span class="text-white font-bold">키보드 방향키 / WASD</span>: 전진, 후진, 좌우 회전</div>
+                <div>• <span class="text-white font-bold">스페이스바</span>: 급브레이크</div>
+                <div>• <span class="text-white font-bold">화면 우측 하단 컨트롤러</span>: 모바일 터치 조작 완벽 지원</div>
+            </div>
+            <button id="start-game-btn" class="w-full bg-gradient-to-r from-yellow-400 to-amber-500 hover:from-yellow-500 hover:to-amber-600 text-gray-950 font-black text-lg py-4 rounded-2xl shadow-xl transition-all duration-300 transform active:scale-95">
+                배달 출근하기 START
+            </button>
+        </div>
+    </div>
+
+    <!-- 배달 성공 알림창 (Toast) - 비차단형, 자동 소멸 -->
+    <div id="success-toast" class="hidden fixed top-1/4 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-950/90 backdrop-blur-md border-2 border-yellow-400 p-5 rounded-2xl z-40 text-center shadow-2xl max-w-xs pointer-events-none transition-all duration-500 opacity-0">
+        <div class="text-3xl mb-1">🎉</div>
+        <div class="text-lg font-black text-yellow-400">배달 완료!</div>
+        <p class="text-[11px] text-gray-400 mt-0.5" id="toast-desc">신속배달 완료</p>
+        <div class="my-1 text-2xl font-extrabold text-green-400" id="toast-fee">+ ₩0</div>
+    </div>
+
+    <!-- 배달 실패 알림창 - 비차단형, 자동 소멸 -->
+    <div id="fail-toast" class="hidden fixed top-1/4 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-gray-950/90 backdrop-blur-md border-2 border-red-500 p-5 rounded-2xl z-40 text-center shadow-2xl max-w-xs pointer-events-none transition-all duration-500 opacity-0">
+        <div class="text-3xl mb-1">⏰</div>
+        <div class="text-lg font-black text-red-500">배달 시간 초과!</div>
+        <p class="text-[11px] text-gray-400 mt-0.5">고객님이 배달 취소를 요청하셨습니다.</p>
+    </div>
+
+    <script>
+        // --- 게임 설정 정보 ---
+        const GAME_CONFIG = {
+            mapWidth: 1000,
+            mapHeight: 1000,
+            gridSize: 100, // 건물 격자 간격
+            speedFactor: 1.5,
+            rotationSpeed: 0.04,
+            maxSpeed: 2.2,
+            friction: 0.96,
+            gravity: 0.1,
+            timeSpeed: 0.05 // 인게임 1분이 몇 밀리초에 해당하는지 결정 (시간의 속도)
+        };
+
+        // 배달지 후보군 (강남 중심 구글맵 랜드마크 콘셉트)
+        const DELIVERY_DESTINATIONS = [
+            { name: "📍 강남역 11번출구 버거킹", x: -200, z: -300 },
+            { name: "📍 역삼 아크플레이스 빌딩", x: 350, z: -100 },
+            { name: "📍 선릉역 숲속 오피스 가든", x: 400, z: 400 },
+            { name: "📍 코엑스 아쿠아리움 정문", x: -100, z: -450 },
+            { name: "📍 신사동 가로수길 카페골목", x: -450, z: 200 },
+            { name: "📍 청담동 한우 고급 다이닝", x: 250, z: -400 },
+            { name: "📍 논현동 24시 국밥 전문점", x: -300, z: 300 },
+            { name: "📍 압구정 로데오 명품 편집샵", x: -150, z: 150 },
+            { name: "📍 삼성동 무역센터 푸드라운지", x: 300, z: -350 },
+            { name: "📍 도곡동 타워팰리스 펜트하우스", x: 100, z: 450 }
+        ];
+
+        // 음식점 위치 (고정 출발지)
+        const RESTAURANT_POS = { x: 0, z: 0, name: "🍔 강남 딜리버리 허브 본점" };
+
+        // --- 전역 게임 상태 ---
+        let state = {
+            money: 0,
+            hour: 15, // 인게임 시각 (15시 시작)
+            minute: 0,
+            isPeakTime: false,
+            
+            // 배달 상태
+            currentCall: null, // 대기 중인 콜
+            activeDelivery: null, // 현재 활성화된 배달 정보
+            bike: {
+                x: 0,
+                y: 0,
+                z: 100,
+                angle: 0,
+                speed: 0,
+                mesh: null
+            },
+            
+            // 입력 상태
+            keys: {},
+            touchControls: {
+                left: false,
+                right: false,
+                up: false,
+                down: false
+            }
+        };
+
+        // --- UI 요소 선택자 ---
+        const startModal = document.getElementById('start-modal');
+        const startGameBtn = document.getElementById('start-game-btn');
+        const moneyDisplay = document.getElementById('money-display');
+        const timeDisplay = document.getElementById('time-display');
+        const peakIndicator = document.getElementById('peak-indicator');
+        const callCard = document.getElementById('call-card');
+        const callDistance = document.getElementById('call-distance');
+        const callDestination = document.getElementById('call-destination');
+        const callBaseFee = document.getElementById('call-base-fee');
+        const callPeakBonusRow = document.getElementById('call-peak-bonus-row');
+        const callPeakBonus = document.getElementById('call-peak-bonus');
+        const callTotalFee = document.getElementById('call-total-fee');
+        const acceptBtn = document.getElementById('accept-btn');
+        const deliveryCard = document.getElementById('delivery-card');
+        const deliveryTimer = document.getElementById('delivery-timer');
+        const deliveryDestName = document.getElementById('delivery-dest-name');
+        const deliveryDistText = document.getElementById('delivery-dist-text');
+        const deliveryProgress = document.getElementById('delivery-progress');
+        const speedText = document.getElementById('speed-text');
+        const successToast = document.getElementById('success-toast');
+        const toastFee = document.getElementById('toast-fee');
+        const toastDesc = document.getElementById('toast-desc');
+        const failToast = document.getElementById('fail-toast');
+        const minimapCanvas = document.getElementById('minimapCanvas');
+
+        // --- Three.js 핵심 콤포넌트 ---
+        let scene, camera, renderer;
+        let ground, targetIndicatorMesh;
+        let buildings = [];
+
+        // --- 게임 시작 핸들러 ---
+        startGameBtn.addEventListener('click', () => {
+            startModal.classList.add('hidden');
+            initGame();
+        });
+
+        // --- 초기화 및 세팅 ---
+        function initGame() {
+            // Three.js 씬 구축
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0f172a); // 밤하늘에 가까운 군청색 분위기 (구글맵 다크모드풍)
+            scene.fog = new THREE.FogExp2(0x0f172a, 0.0035);
+
+            // 카메라 설정 (3인칭 뒤쫓아가기에 적합한 사양)
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1500);
+
+            // 렌더러 설정
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            // 조명 설정
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffe6a3, 1.2);
+            dirLight.position.set(200, 400, 100);
+            dirLight.castShadow = true;
+            scene.add(dirLight);
+
+            // 환경 구축
+            createCityWorld();
+
+            // 오토바이 생성
+            createMotorcycle();
+
+            // 입력 바인딩
+            setupInputListeners();
+
+            // 이벤트 핸들러 초기화
+            acceptBtn.addEventListener('click', acceptDeliveryCall);
+
+            // 리사이즈 처리
+            window.addEventListener('resize', onWindowResize);
+
+            // 주기적인 시간 변화 및 신규 배달콜 수신 루프 실행
+            setInterval(updateGameClock, 400); // 0.4초당 1분씩 경과
+            setInterval(generateDeliveryCall, 6000); // 6초마다 새로운 콜 자동 생성 및 갱신
+
+            // 첫 배달 콜 즉시 생성
+            generateDeliveryCall();
+
+            // 메인 렌더링 루프 가동
+            animate();
+        }
+
+        // --- 지형 및 빌딩 (구글맵 스타일 도시) 생성 ---
+        function createCityWorld() {
+            // 구글맵 다크모드 스타일 도로 평면 (바닥)
+            const groundGeo = new THREE.PlaneGeometry(GAME_CONFIG.mapWidth, GAME_CONFIG.mapHeight);
+            const groundMat = new THREE.MeshStandardMaterial({ 
+                color: 0x1e293b, 
+                roughness: 0.8,
+                metalness: 0.1
+            });
+            ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // 격자형 도로 그리드 (구글맵 가이드라인 스타일)
+            const gridHelper = new THREE.GridHelper(GAME_CONFIG.mapWidth, 30, 0x334155, 0x1e293b);
+            gridHelper.position.y = 0.1;
+            scene.add(gridHelper);
+
+            // 도로 구획 및 빌딩들 무작위 생성 (오토바이 충돌을 피할 수 있게 블록형 격자 배치)
+            const blockSpace = 120;
+            const bldMat = new THREE.MeshStandardMaterial({ 
+                color: 0x334155,
+                roughness: 0.4,
+                metalness: 0.3
+            });
+
+            // 오토바이가 갈 수 있는 도로 구획을 지켜가면서 건물 블록들을 입체적으로 수십 개 설치
+            for (let x = -GAME_CONFIG.mapWidth/2 + 60; x < GAME_CONFIG.mapWidth/2; x += blockSpace) {
+                for (let z = -GAME_CONFIG.mapHeight/2 + 60; z < GAME_CONFIG.mapHeight/2; z += blockSpace) {
+                    // 원점(출발지 음식점 근처) 및 특정 목적지 반경은 빌딩을 설치하지 않아 통행로 확보
+                    if (Math.abs(x) < 50 && Math.abs(z) < 50) continue;
+
+                    // 랜덤한 빌딩 모양 제작
+                    const bldWidth = 60 + Math.random() * 20;
+                    const bldHeight = 40 + Math.random() * 120;
+                    const bldDepth = 60 + Math.random() * 20;
+
+                    const bldGeo = new THREE.BoxGeometry(bldWidth, bldHeight, bldDepth);
+                    const bldMesh = new THREE.Mesh(bldGeo, bldMat);
+                    bldMesh.position.set(x, bldHeight/2, z);
+                    bldMesh.castShadow = true;
+                    bldMesh.receiveShadow = true;
+                    scene.add(bldMesh);
+
+                    // 빌딩 객체 저장 (추후 충돌 검사에 활용 가능)
+                    buildings.push({
+                        mesh: bldMesh,
+                        x: x,
+                        z: z,
+                        halfW: bldWidth/2,
+                        halfD: bldDepth/2
+                    });
+
+                    // 빌딩 장식용 창문 불빛 포인트 네온 제작 (밤 도시 분위기 연출)
+                    if (Math.random() > 0.3) {
+                        const neonColors = [0x38bdf8, 0xfacc15, 0x4ade80, 0xf43f5e];
+                        const neonColor = neonColors[Math.floor(Math.random() * neonColors.length)];
+                        const neonGeo = new THREE.BoxGeometry(2, bldHeight * 0.7, 2);
+                        const neonMat = new THREE.MeshBasicMaterial({ color: neonColor });
+                        const neon = new THREE.Mesh(neonGeo, neonMat);
+                        // 건물 모서리에 포인트 네온 배치
+                        neon.position.set(x + bldWidth/2 + 0.5, bldHeight/2, z + bldDepth/2 + 0.5);
+                        scene.add(neon);
+                    }
+                }
+            }
+
+            // 가로수 및 가로등 설치
+            for (let i = 0; i < 40; i++) {
+                const tx = (Math.random() - 0.5) * (GAME_CONFIG.mapWidth - 100);
+                const tz = (Math.random() - 0.5) * (GAME_CONFIG.mapHeight - 100);
+                
+                // 가로등 생성 (노란 빛 포인트)
+                const poleGeo = new THREE.CylinderGeometry(0.5, 0.5, 15);
+                const poleMat = new THREE.MeshStandardMaterial({ color: 0x64748b });
+                const pole = new THREE.Mesh(poleGeo, poleMat);
+                pole.position.set(tx, 7.5, tz);
+                scene.add(pole);
+
+                const bulbGeo = new THREE.SphereGeometry(1.5, 8, 8);
+                const bulbMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+                const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+                bulb.position.set(tx, 15, tz);
+                scene.add(bulb);
+            }
+
+            // 허브 음식점 (출발지) 시각 표시 마커 생성
+            const resGeo = new THREE.CylinderGeometry(15, 15, 2, 24);
+            const resMat = new THREE.MeshBasicMaterial({ color: 0x22c55e, wireframe: true });
+            const resMarker = new THREE.Mesh(resGeo, resMat);
+            resMarker.position.set(RESTAURANT_POS.x, 0.2, RESTAURANT_POS.z);
+            scene.add(resMarker);
+
+            // 출발지 상공 플래그
+            const flagGeo = new THREE.ConeGeometry(5, 15, 4);
+            const flagMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.1 });
+            const flag = new THREE.Mesh(flagGeo, flagMat);
+            flag.position.set(RESTAURANT_POS.x, 20, RESTAURANT_POS.z);
+            flag.rotation.x = Math.PI;
+            scene.add(flag);
+
+            // 목적지용 안내 빔 마커 (초기엔 숨김)
+            const targetGeo = new THREE.CylinderGeometry(12, 12, 80, 16, 1, true);
+            const targetMat = new THREE.MeshBasicMaterial({ 
+                color: 0xfacc15, 
+                transparent: true, 
+                opacity: 0.4,
+                side: THREE.DoubleSide 
+            });
+            targetIndicatorMesh = new THREE.Mesh(targetGeo, targetMat);
+            targetIndicatorMesh.position.set(0, -200, 0); // 땅속에 숨김
+            scene.add(targetIndicatorMesh);
+        }
+
+        // --- 오토바이 3D 모델 수동 빌딩 (외관) ---
+        function createMotorcycle() {
+            const bikeGroup = new THREE.Group();
+
+            // 1. 차체 몸통 (바디)
+            const bodyGeo = new THREE.BoxGeometry(4, 3.5, 10);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xef4444, metalness: 0.8, roughness: 0.2 }); // 시그니처 배달용 레드
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 2.5;
+            body.castShadow = true;
+            bikeGroup.add(body);
+
+            // 2. 엔진 부품 메탈 느낌
+            const engGeo = new THREE.BoxGeometry(3, 2, 4);
+            const engMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.9, roughness: 0.1 });
+            const engine = new THREE.Mesh(engGeo, engMat);
+            engine.position.set(0, 1.5, -0.5);
+            bikeGroup.add(engine);
+
+            // 3. 앞바퀴
+            const wheelGeo = new THREE.CylinderGeometry(1.8, 1.8, 1.2, 16);
+            const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.9 });
+            const frontWheel = new THREE.Mesh(wheelGeo, wheelMat);
+            frontWheel.rotation.z = Math.PI / 2;
+            frontWheel.position.set(0, 1.8, 4.5);
+            frontWheel.castShadow = true;
+            bikeGroup.add(frontWheel);
+
+            // 4. 뒷바퀴
+            const rearWheel = frontWheel.clone();
+            rearWheel.position.set(0, 1.8, -4.5);
+            bikeGroup.add(rearWheel);
+
+            // 5. 배달통 (Rider Box - 필수 아이템)
+            const boxGeo = new THREE.BoxGeometry(4.5, 4.5, 4.5);
+            const boxMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+            const pbox = new THREE.Mesh(boxGeo, boxMat);
+            pbox.position.set(0, 4.5, -3.5);
+            pbox.castShadow = true;
+            bikeGroup.add(pbox);
+
+            // 배달통에 포인트 스트라이프 로고 입히기
+            const stripeGeo = new THREE.BoxGeometry(4.6, 1, 4.6);
+            const stripeMat = new THREE.MeshBasicMaterial({ color: 0x10b981 }); // 신선한 배달 초록색
+            const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+            stripe.position.set(0, 4.5, -3.5);
+            bikeGroup.add(stripe);
+
+            // 6. 윈드스크린 (앞유리)
+            const glassGeo = new THREE.BoxGeometry(3, 3.5, 0.3);
+            const glassMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.6, roughness: 0 });
+            const glass = new THREE.Mesh(glassGeo, glassMat);
+            glass.position.set(0, 5, 3.5);
+            glass.rotation.x = 0.3;
+            bikeGroup.add(glass);
+
+            // 7. 앞 전조등 (헤드라이트)
+            const lightGeo = new THREE.SphereGeometry(0.8, 8, 8);
+            const lightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+            const light = new THREE.Mesh(lightGeo, lightMat);
+            light.position.set(0, 3.8, 5.1);
+            bikeGroup.add(light);
+
+            // 씬에 추가
+            bikeGroup.position.set(state.bike.x, state.bike.y, state.bike.z);
+            scene.add(bikeGroup);
+            state.bike.mesh = bikeGroup;
+        }
+
+        // --- 입출력 바인딩 및 이벤트 리스너 ---
+        function setupInputListeners() {
+            // 키보드 키다운 이벤트
+            window.addEventListener('keydown', (e) => {
+                const key = e.key.toLowerCase();
+                state.keys[key] = true;
+                if (key === ' ' || key === 'spacebar') {
+                    state.keys['space'] = true;
+                }
+            });
+
+            // 키보드 키업 이벤트
+            window.addEventListener('keyup', (e) => {
+                const key = e.key.toLowerCase();
+                state.keys[key] = false;
+                if (key === ' ' || key === 'spacebar') {
+                    state.keys['space'] = false;
+                }
+            });
+
+            // 모바일 터치 패널 이벤트 연동
+            const bindTouchBtn = (id, property) => {
+                const btn = document.getElementById(id);
+                const startEvent = (e) => {
+                    e.preventDefault();
+                    state.touchControls[property] = true;
+                };
+                const endEvent = (e) => {
+                    e.preventDefault();
+                    state.touchControls[property] = false;
+                };
+                btn.addEventListener('touchstart', startEvent);
+                btn.addEventListener('touchend', endEvent);
+                btn.addEventListener('mousedown', startEvent);
+                btn.addEventListener('mouseup', endEvent);
+                btn.addEventListener('mouseleave', endEvent);
+            };
+
+            bindTouchBtn('btn-left', 'left');
+            bindTouchBtn('btn-right', 'right');
+            bindTouchBtn('btn-up', 'up');
+            bindTouchBtn('btn-down', 'down');
+        }
+
+        // --- 인게임 시각 업데이트 및 피크타임 체크 ---
+        function updateGameClock() {
+            state.minute += 1;
+            if (state.minute >= 60) {
+                state.minute = 0;
+                state.hour += 1;
+                if (state.hour >= 24) {
+                    state.hour = 0;
+                }
+            }
+
+            // 시간 텍스트 업데이트
+            const formatHour = String(state.hour).padStart(2, '0');
+            const formatMin = String(state.minute).padStart(2, '0');
+            timeDisplay.innerText = `${formatHour}:${formatMin}`;
+
+            // 18:00 ~ 22:00 피크타임 감지
+            const isNowPeak = (state.hour >= 18 && state.hour < 22);
+            if (isNowPeak !== state.isPeakTime) {
+                state.isPeakTime = isNowPeak;
+                if (state.isPeakTime) {
+                    peakIndicator.classList.remove('hidden');
+                } else {
+                    peakIndicator.classList.add('hidden');
+                }
+                // 현재 진행 대기 중인 콜이 있다면 금액 다시 계산하여 리프레시
+                recalculateCallFees();
+            }
+        }
+
+        // --- 신규 배달콜 랜덤 생성 알고리즘 ---
+        function generateDeliveryCall() {
+            // 이미 배달 중이거나 거절하지 않은 수락대기 콜이 살아있는 경우 갱신 주기 연장
+            if (state.activeDelivery) return;
+
+            // 랜덤한 배달 목적지 선정
+            const randIdx = Math.floor(Math.random() * DELIVERY_DESTINATIONS.length);
+            const destination = DELIVERY_DESTINATIONS[randIdx];
+
+            // 거리 계산 (오토바이의 현 위치에서 음식점을 갔다가 목적지까지 가는 총 이동거리 산출)
+            const bikeToRestDist = getDistance(state.bike.x, state.bike.z, RESTAURANT_POS.x, RESTAURANT_POS.z);
+            const restToDestDist = getDistance(RESTAURANT_POS.x, RESTAURANT_POS.z, destination.x, destination.z);
+            const totalDist = Math.round(bikeToRestDist + restToDestDist);
+
+            // 배달료 계산식: 기본 ₩3,000 + (미터당 ₩15 추가)
+            const baseFee = Math.round(3000 + totalDist * 15);
+
+            state.currentCall = {
+                destination: destination,
+                totalDistance: totalDist,
+                baseFee: baseFee
+            };
+
+            // UI 렌더링
+            callCard.classList.remove('hidden');
+            recalculateCallFees();
+        }
+
+        // --- 피크타임 배달료 2배 보너스 반영 로직 ---
+        function recalculateCallFees() {
+            if (!state.currentCall) return;
+
+            const base = state.currentCall.baseFee;
+            const isPeak = state.isPeakTime;
+            const bonus = isPeak ? base : 0;
+            const finalFee = base + bonus;
+
+            callDistance.innerText = `총 예상거리: ${state.currentCall.totalDistance}m`;
+            callDestination.innerText = state.currentCall.destination.name;
+            callBaseFee.innerText = `₩${base.toLocaleString()}`;
+
+            if (isPeak) {
+                callPeakBonusRow.classList.remove('hidden');
+                callPeakBonus.innerText = `+₩${bonus.toLocaleString()}`;
+            } else {
+                callPeakBonusRow.classList.add('hidden');
+            }
+            callTotalFee.innerText = `₩${finalFee.toLocaleString()}`;
+        }
+
+        // --- 배달 수락 클릭 ---
+        function acceptDeliveryCall() {
+            if (!state.currentCall) return;
+
+            // 수락 대기 콜을 활성 배달로 전환
+            const finalFee = state.currentCall.baseFee * (state.isPeakTime ? 2 : 1);
+            
+            state.activeDelivery = {
+                destination: state.currentCall.destination,
+                totalDistance: state.currentCall.totalDistance,
+                fee: finalFee,
+                timeLeft: 60, // 배달 제한시간 60초
+                status: 'GO_TO_RESTAURANT', // 상태: 'GO_TO_RESTAURANT' (음식점 가기) -> 'DELIVERING' (목적지 가기)
+                startBikeX: state.bike.x,
+                startBikeZ: state.bike.z
+            };
+
+            state.currentCall = null;
+            callCard.classList.add('hidden');
+
+            // 배달정보 UI 오픈
+            deliveryCard.classList.remove('hidden');
+            updateDeliveryUI();
+
+            // 목표 빔 지시등 위치를 '음식점'으로 1차 설정
+            targetIndicatorMesh.position.set(RESTAURANT_POS.x, 0, RESTAURANT_POS.z);
+
+            // 배달 제한 시간 타이머 가동
+            if (state.deliveryInterval) clearInterval(state.deliveryInterval);
+            state.deliveryInterval = setInterval(() => {
+                if (state.activeDelivery) {
+                    state.activeDelivery.timeLeft -= 1;
+                    deliveryTimer.innerText = `남은 시간: ${state.activeDelivery.timeLeft}초`;
+
+                    if (state.activeDelivery.timeLeft <= 0) {
+                        // 시간 초과 실패 처리
+                        clearInterval(state.deliveryInterval);
+                        triggerDeliveryFail();
+                    }
+                }
+            }, 1000);
+        }
+
+        // --- 배달 진행정보 UI 실시간 갱신 ---
+        function updateDeliveryUI() {
+            if (!state.activeDelivery) return;
+
+            const ad = state.activeDelivery;
+            if (ad.status === 'GO_TO_RESTAURANT') {
+                deliveryDestName.innerText = `🍔 음식 픽업처: ${RESTAURANT_POS.name}`;
+                const dist = Math.round(getDistance(state.bike.x, state.bike.z, RESTAURANT_POS.x, RESTAURANT_POS.z));
+                deliveryDistText.innerText = `${dist}m`;
+                
+                // 임시 프로그레스바 수치 계산
+                const progress = Math.max(0, Math.min(100, (1 - dist / ad.totalDistance) * 100));
+                deliveryProgress.style.width = `${progress}%`;
+            } else if (ad.status === 'DELIVERING') {
+                deliveryDestName.innerText = ad.destination.name;
+                const dist = Math.round(getDistance(state.bike.x, state.bike.z, ad.destination.x, ad.destination.z));
+                deliveryDistText.innerText = `${dist}m`;
+
+                // 전체 구간 대비 잔여 거리 백분율 연산
+                const restToDest = getDistance(RESTAURANT_POS.x, RESTAURANT_POS.z, ad.destination.x, ad.destination.z);
+                const progress = Math.max(0, Math.min(100, (1 - dist / restToDest) * 100));
+                deliveryProgress.style.width = `${progress}%`;
+            }
+        }
+
+        // --- STREAMING_CHUNK: 비차단 자동 수령 및 알림 연출 로직 구현 ---
+        // --- 배달 성공 처리 (수동 수수료 수령 팝업 제거) ---
+        function triggerDeliverySuccess() {
+            clearInterval(state.deliveryInterval);
+            const fee = state.activeDelivery.fee;
+
+            // 배달 즉시 자금 정산 반영
+            state.money += fee;
+            moneyDisplay.innerText = `₩${state.money.toLocaleString()}`;
+
+            // 비차단형 알림 텍스트 업데이트 및 표시
+            toastFee.innerText = `+ ₩${fee.toLocaleString()}`;
+            toastDesc.innerText = `📍 ${state.activeDelivery.destination.name}`;
+            
+            const toast = successToast;
+            toast.classList.remove('hidden');
+            setTimeout(() => {
+                toast.classList.remove('opacity-0');
+                toast.classList.add('opacity-100');
+            }, 50);
+
+            // 2.5초 후 자동으로 스르륵 사라짐
+            setTimeout(() => {
+                toast.classList.remove('opacity-100');
+                toast.classList.add('opacity-0');
+                setTimeout(() => {
+                    toast.classList.add('hidden');
+                }, 500);
+            }, 2500);
+
+            // 팝업 승인을 기다리지 않고 즉시 다음 콜 수신 가능한 상태로 리셋
+            resetDeliveryState();
+        }
+
+        // --- 배달 실패 처리 (비차단형 자동 소멸 처리) ---
+        function triggerDeliveryFail() {
+            clearInterval(state.deliveryInterval);
+            
+            const toast = failToast;
+            toast.classList.remove('hidden');
+            setTimeout(() => {
+                toast.classList.remove('opacity-0');
+                toast.classList.add('opacity-100');
+            }, 50);
+
+            // 2.5초 후 자동으로 스르륵 사라짐
+            setTimeout(() => {
+                toast.classList.remove('opacity-100');
+                toast.classList.add('opacity-0');
+                setTimeout(() => {
+                    toast.classList.add('hidden');
+                }, 500);
+            }, 2500);
+
+            resetDeliveryState();
+        }
+
+        // --- 배달 상태 완전 리셋 ---
+        function resetDeliveryState() {
+            state.activeDelivery = null;
+            deliveryCard.classList.add('hidden');
+            targetIndicatorMesh.position.set(0, -200, 0); // 지시등 숨김
+        }
+
+        // --- 거리 공공 공식 유틸 ---
+        function getDistance(x1, z1, x2, z2) {
+            return Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
+        }
+
+        // --- 브라우저 화면 리사이즈 조절 ---
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- 프레임별 바이크 물리엔진 & 인풋 연산 ---
+        function updateBikePhysics() {
+            const bike = state.bike;
+            if (!bike.mesh) return;
+
+            // 전진/후진 인풋값 획득 (키보드 또는 모바일 터치 패드)
+            let gas = 0;
+            if (state.keys['w'] || state.keys['arrowup'] || state.touchControls.up) {
+                gas = 1;
+            } else if (state.keys['s'] || state.keys['arrowdown'] || state.touchControls.down) {
+                gas = -0.5;
+            }
+
+            // 좌우 조향 인풋값 획득
+            let steer = 0;
+            if (state.keys['a'] || state.keys['arrowleft'] || state.touchControls.left) {
+                steer = 1;
+            } else if (state.keys['d'] || state.keys['arrowright'] || state.touchControls.right) {
+                steer = -1;
+            }
+
+            // 급브레이크 키
+            const isBraking = state.keys['space'];
+
+            // 물리 가속/감속 처리
+            if (gas > 0) {
+                bike.speed += 0.08 * gas;
+            } else if (gas < 0) {
+                bike.speed += 0.05 * gas;
+            } else {
+                // 악셀 뗐을 때 자연 마찰 감속
+                bike.speed *= GAME_CONFIG.friction;
+            }
+
+            // 스페이스 브레이크 작동 시 급제동
+            if (isBraking) {
+                bike.speed *= 0.8;
+            }
+
+            // 최고 한계 속도 적용
+            bike.speed = Math.max(-GAME_CONFIG.maxSpeed / 2, Math.min(GAME_CONFIG.maxSpeed, bike.speed));
+
+            // 가속 중일 때만 핸들 회전 유효 (실제 오토바이 물리 고려)
+            if (Math.abs(bike.speed) > 0.1) {
+                const directionFactor = bike.speed > 0 ? 1 : -1;
+                bike.angle += steer * GAME_CONFIG.rotationSpeed * directionFactor;
+            }
+
+            // 회전각 기반 좌표 오프셋 수정
+            const nextX = bike.x + Math.sin(bike.angle) * bike.speed * GAME_CONFIG.speedFactor;
+            const nextZ = bike.z + Math.cos(bike.angle) * bike.speed * GAME_CONFIG.speedFactor;
+
+            // 간이 빌딩 충돌 연산
+            let hitBuilding = false;
+            for (let bld of buildings) {
+                if (nextX > bld.x - bld.halfW - 2 && nextX < bld.x + bld.halfW + 2 &&
+                    nextZ > bld.z - bld.halfD - 2 && nextZ < bld.z + bld.halfD + 2) {
+                    hitBuilding = true;
+                    break;
+                }
+            }
+
+            // 맵 경계 구역 이탈 방지
+            const halfMapW = GAME_CONFIG.mapWidth / 2;
+            const halfMapH = GAME_CONFIG.mapHeight / 2;
+            if (Math.abs(nextX) > halfMapW - 5 || Math.abs(nextZ) > halfMapH - 5) {
+                hitBuilding = true;
+            }
+
+            if (!hitBuilding) {
+                bike.x = nextX;
+                bike.z = nextZ;
+            } else {
+                // 충돌 시 가벼운 튕김 및 감속
+                bike.speed = -bike.speed * 0.4;
+            }
+
+            // 메쉬 반영
+            bike.mesh.position.set(bike.x, bike.y, bike.z);
+            bike.mesh.rotation.y = bike.angle;
+
+            // 계기판 속도 UI 표시 (정수 변환 후 노출)
+            const kmh = Math.round(Math.abs(bike.speed) * 45);
+            speedText.innerHTML = `${kmh} <span class="text-xs">km/h</span>`;
+        }
+
+        // --- 3인칭 스마트 카메라 트래킹 ---
+        function updateCameraView() {
+            const bike = state.bike;
+            if (!bike.mesh) return;
+
+            // 오토바이 뒤쪽 위에서 정면을 응시하도록 3인칭 오프셋 벡터 계산
+            const followDist = 32;
+            const followHeight = 14;
+
+            const targetCamX = bike.x - Math.sin(bike.angle) * followDist;
+            const targetCamZ = bike.z - Math.cos(bike.angle) * followDist;
+            const targetCamY = bike.y + followHeight;
+
+            // 카메라 위치 보간 (부드러운 카메라 지연 이동 트래킹 효과 구현)
+            camera.position.x += (targetCamX - camera.position.x) * 0.12;
+            camera.position.z += (targetCamZ - camera.position.z) * 0.12;
+            camera.position.y += (targetCamY - camera.position.y) * 0.12;
+
+            // 오토바이를 향해 시점 고정
+            camera.lookAt(bike.x, bike.y + 3, bike.z);
+        }
+
+        // --- 배달 목표물 충돌 및 지점 체크 루프 ---
+        function checkDeliveryTargets() {
+            if (!state.activeDelivery) return;
+
+            const ad = state.activeDelivery;
+            const bike = state.bike;
+
+            if (ad.status === 'GO_TO_RESTAURANT') {
+                // 음식점에 도착했는지 반경 체크
+                const distToRest = getDistance(bike.x, bike.z, RESTAURANT_POS.x, RESTAURANT_POS.z);
+                if (distToRest < 20) {
+                    // 픽업 완료! 이제 목적지로 상태 변경
+                    ad.status = 'DELIVERING';
+                    targetIndicatorMesh.position.set(ad.destination.x, 0, ad.destination.z);
+                    updateDeliveryUI();
+                }
+            } else if (ad.status === 'DELIVERING') {
+                // 최종 목적지에 무사 도달했는지 체크
+                const distToDest = getDistance(bike.x, bike.z, ad.destination.x, ad.destination.z);
+                if (distToDest < 22) {
+                    // 배달 최종 완료!
+                    triggerDeliverySuccess();
+                }
+            }
+
+            // 실시간 배달 위젯 정보 갱신
+            updateDeliveryUI();
+        }
+
+        // --- 구글맵 스타일 2D 미니맵 렌더러 ---
+        function renderMinimap() {
+            const ctx = minimapCanvas.getContext('2d');
+            const w = minimapCanvas.width = minimapCanvas.clientWidth * window.devicePixelRatio;
+            const h = minimapCanvas.height = minimapCanvas.clientHeight * window.devicePixelRatio;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // 미니맵 중심은 항상 라이더(오토바이) 위치
+            const zoom = 0.25; // 줌 레벨
+            const cx = w / 2;
+            const cy = h / 2;
+
+            // 회전 적용 (카메라 뱡항에 따라 미니맵 자동 회전 시켜 가독성 증대)
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(-state.bike.angle);
+
+            // 1. 도로 구획 및 격자 빌딩 표현 (회색 도로, 검정 땅)
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(-GAME_CONFIG.mapWidth * zoom, -GAME_CONFIG.mapHeight * zoom, GAME_CONFIG.mapWidth * 2 * zoom, GAME_CONFIG.mapHeight * 2 * zoom);
+
+            // 건물 그리기
+            ctx.fillStyle = '#0f172a';
+            for (let bld of buildings) {
+                const bx = (bld.x - state.bike.x) * zoom;
+                const bz = (bld.z - state.bike.z) * zoom;
+                const bw = bld.halfW * 2 * zoom;
+                const bh = bld.halfD * 2 * zoom;
+                ctx.fillRect(bx - bw/2, bz - bh/2, bw, bh);
+            }
+
+            // 2. 출발 허브 음식점 마킹 (초록 아이콘)
+            const rx = (RESTAURANT_POS.x - state.bike.x) * zoom;
+            const rz = (RESTAURANT_POS.z - state.bike.z) * zoom;
+            ctx.beginPath();
+            ctx.arc(rx, rz, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = '#22c55e';
+            ctx.fill();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            // 3. 배달 목적지 마킹 및 안내 점선 가이드 (활성화 되었을 시에 노랑 마커)
+            if (state.activeDelivery) {
+                const targetPos = state.activeDelivery.status === 'GO_TO_RESTAURANT' ? RESTAURANT_POS : state.activeDelivery.destination;
+                const tx = (targetPos.x - state.bike.x) * zoom;
+                const tz = (targetPos.z - state.bike.z) * zoom;
+
+                // 타겟을 향한 실선 가이드
+                ctx.beginPath();
+                ctx.setLineDash([4, 4]);
+                ctx.moveTo(0, 0);
+                ctx.lineTo(tx, tz);
+                ctx.strokeStyle = '#facc15';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                // 타겟 마커
+                ctx.beginPath();
+                ctx.arc(tx, tz, 9, 0, 2 * Math.PI);
+                ctx.fillStyle = '#eab308';
+                ctx.fill();
+                ctx.strokeStyle = '#ffffff';
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            // 4. 고정 레이어: 나의 위치 (오토바이 중심 아이콘) - 항상 미니맵 중심
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 진행 방향 가리키는 삼각형 포인터
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - 10);
+            ctx.lineTo(cx - 5, cy - 5);
+            ctx.lineTo(cx + 5, cy - 5);
+            ctx.closePath();
+            ctx.fillStyle = '#ef4444';
+            ctx.fill();
+        }
+
+        // --- 메인 게임 애니메이션 루프 ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 오토바이 움직임 갱신
+            updateBikePhysics();
+
+            // 카메라 시선 갱신
+            updateCameraView();
+
+            // 배달 도달 판단
+            checkDeliveryTargets();
+
+            // 가이드 빔 실린더 회전 연출
+            if (targetIndicatorMesh) {
+                targetIndicatorMesh.rotation.y += 0.02;
+            }
+
+            // 3D 씬 렌더링
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+
+            // 미니맵 드로잉
+            renderMinimap();
+        }
+
+    </script>
+</body>
+</html>
